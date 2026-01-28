@@ -1,12 +1,60 @@
 import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Package, MapPin, Clock, Phone, Mail, Search, Target, Truck, Zap, Shield, Globe, ChevronRight, X, Menu } from 'lucide-react'
+import { Package, MapPin, Clock, Phone, Mail, Search, Target, Truck, Zap, Shield, Globe, ChevronRight, X, Menu, Send, CheckCircle, AlertCircle } from 'lucide-react'
+
+// Universal Web3Forms Handler Hook
+const useFormHandler = () => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [isError, setIsError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  
+  const handleSubmit = async (e, accessKey) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setIsError(false);
+    
+    const formData = new FormData(e.target);
+    formData.append('access_key', accessKey);
+    
+    try {
+      const response = await fetch('https://api.web3forms.com/submit', {
+        method: 'POST',
+        body: formData
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setIsSuccess(true);
+        e.target.reset();
+      } else {
+        setIsError(true);
+        setErrorMessage(data.message || 'Что-то пошло не так');
+      }
+    } catch (error) {
+      setIsError(true);
+      setErrorMessage('Ошибка сети. Попробуйте снова.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+  
+  const resetForm = () => {
+    setIsSuccess(false);
+    setIsError(false);
+    setErrorMessage('');
+  };
+  
+  return { isSubmitting, isSuccess, isError, errorMessage, handleSubmit, resetForm };
+};
 
 function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedOffice, setSelectedOffice] = useState(null)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
   const [routeMode, setRouteMode] = useState(false)
+  const [searchError, setSearchError] = useState('')
   const mapRef = useRef(null)
   const ymapsRef = useRef(null)
 
@@ -70,38 +118,73 @@ function App() {
 
           map.geoObjects.add(placemark)
         })
-
-        const searchControl = new window.ymaps.control.SearchControl({
-          options: {
-            provider: 'yandex#search',
-            float: 'left',
-            floatIndex: 100,
-            noPlacemark: false
-          }
-        })
-
-        map.controls.add(searchControl)
       })
     }
   }, [])
 
   const handleSearch = () => {
-    if (searchQuery && ymapsRef.current && mapRef.current) {
-      ymapsRef.current.geocode(searchQuery).then(result => {
+    if (!searchQuery.trim()) {
+      setSearchError('Введите адрес для поиска')
+      return
+    }
+
+    if (ymapsRef.current && mapRef.current) {
+      setSearchError('')
+      
+      ymapsRef.current.geocode(searchQuery, {
+        results: 1
+      }).then(result => {
         const firstGeoObject = result.geoObjects.get(0)
         if (firstGeoObject) {
           const coords = firstGeoObject.geometry.getCoordinates()
-          mapRef.current.setCenter(coords, 15, {
+          const bounds = firstGeoObject.properties.get('boundedBy')
+          
+          mapRef.current.setBounds(bounds, {
             checkZoomRange: true,
             duration: 500
+          }).then(() => {
+            // Add temporary marker for searched location
+            const searchMarker = new ymapsRef.current.Placemark(
+              coords,
+              {
+                balloonContent: `<strong>${searchQuery}</strong>`
+              },
+              {
+                preset: 'islands#greenCircleDotIcon'
+              }
+            )
+            
+            // Remove previous search markers
+            mapRef.current.geoObjects.each(obj => {
+              if (obj.properties && obj.properties.get('type') === 'search') {
+                mapRef.current.geoObjects.remove(obj)
+              }
+            })
+            
+            searchMarker.properties.set('type', 'search')
+            mapRef.current.geoObjects.add(searchMarker)
           })
+          
+          setSearchError('')
+        } else {
+          setSearchError('Адрес не найден. Попробуйте другой запрос.')
         }
+      }).catch(error => {
+        console.error('Geocoding error:', error)
+        setSearchError('Ошибка поиска. Попробуйте снова.')
       })
     }
   }
 
   const buildRoute = (office) => {
-    if (searchQuery && ymapsRef.current && mapRef.current) {
+    if (!searchQuery.trim()) {
+      setSearchError('Введите адрес отправления для построения маршрута')
+      return
+    }
+
+    if (ymapsRef.current && mapRef.current) {
+      setSearchError('')
+      
       ymapsRef.current.geocode(searchQuery).then(result => {
         const firstGeoObject = result.geoObjects.get(0)
         if (firstGeoObject) {
@@ -138,7 +221,12 @@ function App() {
           })
 
           setRouteMode(true)
+        } else {
+          setSearchError('Адрес не найден. Проверьте правильность ввода.')
         }
+      }).catch(error => {
+        console.error('Route error:', error)
+        setSearchError('Ошибка построения маршрута. Попробуйте снова.')
       })
     }
   }
@@ -177,6 +265,7 @@ function App() {
 
       mapRef.current.setCenter([50.0, 0.5], 5)
       setRouteMode(false)
+      setSearchError('')
     }
   }
 
@@ -286,6 +375,12 @@ function App() {
                   Найти
                 </button>
               </div>
+              {searchError && (
+                <div className="mt-2 px-4 py-2 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-600" />
+                  <p className="text-sm text-red-600 font-medium">{searchError}</p>
+                </div>
+              )}
             </div>
           </motion.div>
 
@@ -469,6 +564,28 @@ function App() {
         </div>
       </section>
 
+      {/* Contact Form Section */}
+      <section id="contact" className="py-20 px-6 bg-gradient-to-br from-red-50 via-orange-50 to-yellow-50">
+        <div className="container mx-auto max-w-4xl">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6 }}
+            className="text-center mb-12"
+          >
+            <h2 className="text-5xl md:text-6xl font-black text-gray-900 mb-4">
+              Свяжитесь с нами
+            </h2>
+            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+              Есть вопросы? Оставьте заявку и мы свяжемся с вами в ближайшее время
+            </p>
+          </motion.div>
+
+          <ContactForm />
+        </div>
+      </section>
+
       {/* CTA */}
       <section className="py-20 px-6 bg-gradient-to-br from-red-600 via-orange-600 to-red-700">
         <div className="container mx-auto text-center">
@@ -546,5 +663,138 @@ function App() {
     </div>
   )
 }
+
+// Contact Form Component
+const ContactForm = () => {
+  const { isSubmitting, isSuccess, isError, errorMessage, handleSubmit, resetForm } = useFormHandler();
+  const ACCESS_KEY = 'YOUR_WEB3FORMS_ACCESS_KEY'; // Replace with your Web3Forms Access Key from https://web3forms.com
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ duration: 0.6 }}
+      className="bg-white rounded-3xl shadow-2xl border-4 border-red-100 p-8 md:p-12"
+    >
+      <AnimatePresence mode="wait">
+        {!isSuccess ? (
+          <motion.form
+            key="form"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}
+            onSubmit={(e) => handleSubmit(e, ACCESS_KEY)}
+            className="space-y-6"
+          >
+            <div className="grid md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">
+                  Ваше имя
+                </label>
+                <input
+                  type="text"
+                  name="name"
+                  placeholder="Иван Иванов"
+                  required
+                  className="w-full px-4 py-3 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-100 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:border-red-500 transition-colors font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  name="email"
+                  placeholder="ivan@example.com"
+                  required
+                  className="w-full px-4 py-3 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-100 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:border-red-500 transition-colors font-medium"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">
+                Телефон
+              </label>
+              <input
+                type="tel"
+                name="phone"
+                placeholder="+7 (999) 123-45-67"
+                className="w-full px-4 py-3 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-100 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:border-red-500 transition-colors font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">
+                Сообщение
+              </label>
+              <textarea
+                name="message"
+                placeholder="Расскажите о вашем запросе..."
+                rows="5"
+                required
+                className="w-full px-4 py-3 bg-gradient-to-r from-red-50 to-orange-50 border-2 border-red-100 rounded-xl text-gray-900 placeholder-gray-500 focus:outline-none focus:border-red-500 transition-colors resize-none font-medium"
+              ></textarea>
+            </div>
+
+            {isError && (
+              <div className="flex items-center gap-2 p-4 bg-red-50 border-2 border-red-200 rounded-xl">
+                <AlertCircle className="w-5 h-5 text-red-600" />
+                <p className="text-red-600 font-semibold">{errorMessage}</p>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="w-full bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white px-8 py-4 rounded-xl font-bold transition-all transform hover:scale-105 disabled:transform-none shadow-lg shadow-red-500/30 flex items-center justify-center gap-2"
+            >
+              {isSubmitting ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                  Отправка...
+                </>
+              ) : (
+                <>
+                  <Send className="w-5 h-5" />
+                  Отправить сообщение
+                </>
+              )}
+            </button>
+          </motion.form>
+        ) : (
+          <motion.div
+            key="success"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ duration: 0.4, type: "spring" }}
+            className="text-center py-12"
+          >
+            <div className="bg-green-500/20 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
+              <CheckCircle className="w-10 h-10 text-green-600" />
+            </div>
+            <h3 className="text-3xl font-black text-gray-900 mb-4">
+              Сообщение отправлено!
+            </h3>
+            <p className="text-gray-600 mb-8 max-w-md mx-auto font-medium">
+              Спасибо за обращение. Мы свяжемся с вами в ближайшее время.
+            </p>
+            <button
+              onClick={resetForm}
+              className="text-red-600 hover:text-red-700 font-bold transition-colors"
+            >
+              Отправить еще одно сообщение
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+};
 
 export default App
